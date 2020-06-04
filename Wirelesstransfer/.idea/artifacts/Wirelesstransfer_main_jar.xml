@@ -1,0 +1,8 @@
+<component name="ArtifactManager">
+  <artifact type="jar" name="Wirelesstransfer.main:jar">
+    <output-path>$PROJECT_DIR$/out/artifacts/Wirelesstransfer_main_jar</output-path>
+    <root id="archive" name="Wirelesstransfer.main.jar">
+      <element id="module-output" name="Wirelesstransfer.main" />
+    </root>
+  </artifact>
+</component>
