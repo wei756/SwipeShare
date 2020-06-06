@@ -23,7 +23,7 @@ public class ConnectDialog extends JFrame {
 
     private void initUI(String address, String port, String key) {
         connectPanel = new ConnectPanel();
-        connectPanel.setSize(320, 320);
+        connectPanel.setSize(200, 320);
         connectPanel.setLocation(0, 0);
         connectPanel.setInfo(address, port, key);
         updateConnectPanel();
@@ -33,11 +33,13 @@ public class ConnectDialog extends JFrame {
     }
 
     private void initUI() {
-        setSize(400, 400);
+        setSize(200, 250);
         setTitle("Connect");
         setLocationRelativeTo(null);
+        setUndecorated(true);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         getContentPane().setLayout(null);
+        getContentPane().setBackground(Color.white);
     }
 
     public void setInfo(String address, String port, String key) {
@@ -98,9 +100,9 @@ class ConnectPanel extends JPanel {
 
     public void drawQRCode() {
         if (imageQRCode != null) {
-            Paint paintQRCode = new TexturePaint(imageQRCode, new Rectangle(0, 0, 300, 300));
+            Paint paintQRCode = new TexturePaint(imageQRCode, new Rectangle(0, 0, 200, 200));
             g2d.setPaint(paintQRCode);
-            g2d.fillRect(0, 0, 300, 300);
+            g2d.fillRect(0, 0, 200, 200);
 
             g2d.dispose();
         }
@@ -128,7 +130,7 @@ class ConnectPanel extends JPanel {
             // 코드인식시 링크걸 URL주소
             String codeurl = new String(str.getBytes("UTF-8"), "ISO-8859-1");
             // 큐알코드 바코드 생상값
-            int qrcodeColor = 0xFF2e4e96;
+            int qrcodeColor = 0xFF000000;
             // 큐알코드 배경색상값
             int backgroundColor = 0xFFFFFFFF;
 

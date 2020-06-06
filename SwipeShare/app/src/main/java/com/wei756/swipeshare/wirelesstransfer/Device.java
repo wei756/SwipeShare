@@ -3,21 +3,36 @@ package com.wei756.swipeshare.wirelesstransfer;
 import android.util.Log;
 
 import java.io.*;
-import java.net.SocketException;
+import java.net.Socket;
 import java.security.MessageDigest;
+import java.util.ArrayList;
 
 public abstract class Device {
+
+    final int PASS = 1;
+    final int SUCCESS = 0;
+    final int FAILED = -1;
+
+    boolean DEBUG = false;
+
+    Socket socket;
+
+    Thread inputThread;
+    InputRunnable inputRunnable;
 
     InputStream in;
     OutputStream out;
     DataInputStream din;
     DataOutputStream dout;
 
-    /**
-     * 클라이언트와 연결이 되었을 때 작업
-     */
-    abstract protected int standBy();
+    int port;
+    String key;
+    String guestAddress, guestName;
+    String hostAddress, hostName;
 
+    public boolean isStandBy(){
+        return inputRunnable.isRunning();
+    }
 
     /**
      * 파일의 SHA256를 반환합니다.
@@ -62,11 +77,14 @@ public abstract class Device {
      * @return
      */
     protected String[] getCommand() {
-        String[] result = new String[2];
+        String[] result = new String[3];
         result[1] = null;
+        result[2] = null;
         try {
             String cmd = din.readUTF();
-            Log.d("SERVER", "< " + cmd);
+            if (DEBUG)
+                Log.e("Device", "< " + cmd);
+            result[2] = cmd;
 
             if (cmd.contains(" ")) {
                 result[0] = cmd.substring(0, cmd.indexOf(" "));
@@ -109,12 +127,124 @@ public abstract class Device {
      */
     protected int sendCommand(String cmd) {
         try {
-            Log.d("SERVER", "> " + cmd);
+            if (DEBUG)
+                Log.v("Device", "> " + cmd);
             dout.writeUTF(cmd);
         } catch (IOException e) {
             e.printStackTrace();
             return -1;
         }
         return 0;
+    }
+
+    /**
+     * 들어오는 명령을 비동기로 처리하는 역할을 합니다.
+     */
+    abstract class InputRunnable implements Runnable {
+        ArrayList<InputService> services = new ArrayList<>();
+
+        private volatile boolean running = true;
+        InputRunnable() {
+            init();
+        }
+
+        /**
+         * 서비스를 등록합니다.
+         */
+        abstract protected void init();
+
+        /**
+         * 루프를 중지합니다.
+         */
+        public void terminate() {
+            running = false;
+        }
+
+        /**
+         * 루프가 실행중인지 반환합니다.
+         * @return
+         */
+        public boolean isRunning() {
+            return running;
+        }
+
+        /**
+         * 등록된 서비스에 명령을 전달합니다.
+         */
+        @Override
+        public void run() {
+            while(running) {
+                String[] cmd = getCommand();
+                String exec = cmd[0];
+                String content = cmd[1];
+                String raw = cmd[2];
+                for(InputService service : services) {
+                    service.put(raw);
+                }
+                if ("BYE".equals(exec)) {
+                    //return 0;
+                    terminate();
+                } else if ("ERR".equals(exec)) {
+                    Log.w("InputRunnable", "통신 에러!!! : " + content);
+                    //return -1;
+                }
+            }
+            Log.w("InputRunnable", "인바운드 스레드 종료");
+        }
+    }
+
+    /**
+     * 들어온 명령을 처리합니다.
+     */
+    protected abstract class InputService {
+        protected Device parent;
+
+        boolean enabled = false;
+
+        /**
+         * 부모 인스턴스를 전달합니다.
+         * @param parent
+         */
+        protected InputService(Device parent) {
+            this.parent = parent;
+        }
+
+        protected int put(String str) {
+            String[] cmd = splitCommand(str);
+            String exec = cmd[0];
+            String content = cmd[1];
+
+            if (enabled) {
+                if (onEnabled(exec, content, str) != PASS)
+                    enabled = false;
+            } else {
+                if (onDisabled(exec, content, str) != PASS)
+                    enabled = true;
+            }
+
+            return 0;
+        }
+
+        abstract protected int onEnabled(String exec, String content, String raw);
+
+        abstract protected int onDisabled(String exec, String content, String raw);
+
+        protected String[] splitCommand(String cmd) {
+            String[] result = new String[2];
+            result[1] = null;
+            try {
+                if (cmd.contains(" ")) {
+                    result[0] = cmd.substring(0, cmd.indexOf(" "));
+                    result[1] = cmd.substring(cmd.indexOf(" ") + 1);
+                } else {
+                    result[0] = cmd;
+                }
+            } catch (NullPointerException e) {
+                e.printStackTrace();
+                result[0] = "ERR";
+            }
+
+            return result;
+        }
     }
 }

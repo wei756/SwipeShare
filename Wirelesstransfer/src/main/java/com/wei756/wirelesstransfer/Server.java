@@ -2,45 +2,50 @@ package com.wei756.wirelesstransfer;
 
 import java.io.*;
 import java.net.*;
+import java.util.Base64;
 
 public class Server extends Device {
 
     ServerSocket soc;
 
-    Socket client;
-
     FileOutputStream fout;
-
-    String key;
-    String clientAddress, clientName = "";
-    String serverName = "데스크탑";
 
     public Server(int port, String key) {
         try {
-            this.serverName = InetAddress.getLocalHost().getHostName();
+            this.hostName = InetAddress.getLocalHost().getHostName();
         } catch (UnknownHostException e) {
             e.printStackTrace();
         }
-        System.out.println("I: 서버 이름: " + this.serverName);
+        Log.i("Server", "서버 이름: " + this.hostName);
 
         try {
             soc = new ServerSocket(port);
             this.key = key;
-            System.out.println("I: " + port + "번 포트로 서버 시작됨");
+            Log.i("Server", port + "번 포트로 서버 열림");
 
             int attempt = 0;
             while (true) { // 연결 재시도를 위한 루프
                 int status;
                 if ((status = readyForClient()) == 0) {
-                    if (standBy() == 0)
-                        break;
-                } else if(status == -2) { // TimeoutException
+                    attempt = 0;
+                    Log.i("Server", "인바운드 스레드 시작");
+                    Server self = this;
+                    inputRunnable = new InputRunnable() {
+                        @Override
+                        protected void init() {
+                            services.add(new ContactService(self));
+                            services.add(new FileInputService(self));
+                        }
+                    };
+                    inputThread = new Thread(inputRunnable);
+                    inputThread.start();
+                } else if (status == -2) { // TimeoutException
                     break;
                 } else {
                     // 연결 재시도
                     attempt++;
                     if (attempt > 10) {
-                        System.out.println("W: 클라이언트 연결 실패");
+                        Log.w("Server", "클라이언트 연결 실패");
                     }
                 }
             }
@@ -54,46 +59,7 @@ public class Server extends Device {
                 }
             }
         }
-        System.out.println("I: 서버 종료");
-    }
-
-    /**
-     * 클라이언트와 연결이 되었을 때 작업
-     */
-    @Override
-    protected int standBy() {
-        while (true) { // 명령 입력을 위한 루프
-            String[] cmd = getCommand();
-            String exec = cmd[0];
-            String content = cmd[1];
-
-            if ("HELLO".equals(exec)) {
-                if (getClientInfo() != 0) {
-                    sendCommand("BYE"); // 접속 종료
-                }
-
-            } else if ("SEND".equals(exec)) {
-                int resultcode;
-                for (int i = 0; i < 10; i++) {
-                    resultcode = getFile(content);
-                    if (resultcode == 0) {
-                        sendCommand("GOOD"); // 수신 성공
-                        break;
-                    } else if (i < 9) {
-                        sendCommand("BAD"); // 재시도
-                    } else {
-                        sendCommand("END"); // 시도 횟수 초과로 인한 수신 종료
-                    }
-                }
-
-            } else if ("BYE".equals(exec)) {
-                return 1;
-            } else if ("ERR".equals(exec)) {
-                System.out.println(("E: 통신 에러!!! : " + content));
-                return -1;
-            }
-
-        }
+        Log.i("Server", "서버 종료");
     }
 
     /**
@@ -103,24 +69,24 @@ public class Server extends Device {
      */
     public int readyForClient() {
         try {
-            soc.setSoTimeout(7200);
-            client = soc.accept();                       //클라이언트의 접속을 받습니다.
-            System.out.println("I: 클라이언트 연결됨!");
+            soc.setSoTimeout(7200000);
+            socket = soc.accept();                       //클라이언트의 접속을 받습니다.
+            Log.i("Server", "게스트 연결 수락");
 
             in = null;
             out = null;
             fout = null;
-            in = client.getInputStream();                   //클라이언트 스트림 개통
-            out = client.getOutputStream();                 //클라이언트 스트림 개통
+            in = socket.getInputStream();                   //클라이언트 스트림 개통
+            out = socket.getOutputStream();                 //클라이언트 스트림 개통
             din = new DataInputStream(in);                  //InputStream을 이용해 데이터 단위로 입력을 받는 DataInputStream을 개통합니다.
             dout = new DataOutputStream(out);               //OutputStream을 이용해 데이터 단위로 보내는 스트림을 개통합니다.
         } catch (IOException e) {
             if (e instanceof SocketTimeoutException) {
-                System.out.println("W: 오랫동안 기기 연결이 감지되지 않아 서버를 종료합니다.");
+                Log.w("Server", "오랫동안 기기 연결이 감지되지 않아 서버를 종료합니다.");
 
                 return -2;
-            }else {
-                System.out.println("E: 클라이언트와 연결하는 중 에러가 발생하였습니다!");
+            } else {
+                Log.e("Server", "클라이언트와 연결하는 중 에러가 발생하였습니다!");
                 e.printStackTrace();
 
                 return -1;
@@ -130,120 +96,166 @@ public class Server extends Device {
         return 0;
     }
 
-    /**
-     * 클라이언트의 정보를 확인합니다.
-     *
-     * @return
-     */
-    public int getClientInfo() {
-        String key = "";
-        while (true) {
-            String[] cmd = getCommand();
-            String exec = cmd[0];
-            String content = cmd[1];
+    class ContactService extends InputService {
+        String key;
 
+        /**
+         * 부모 인스턴스를 전달합니다.
+         *
+         * @param parent
+         */
+        ContactService(Device parent) {
+            super(parent);
+        }
+
+        /**
+         * 클라이언트의 정보를 확인합니다.
+         *
+         * @return
+         */
+        @Override
+        public int onEnabled(String exec, String content, String raw) {
             if ("KEY".equals(exec)) {
-                key = content;
+                this.key = content;
             } else if ("ADDR".equals(exec)) {
-                this.clientAddress = content;
+                guestAddress = content;
             } else if ("NAME".equals(exec)) {
-                this.clientName = content;
+                guestName = content;
             } else if ("OVER".equals(exec)) {
-                break;
+                if (!this.key.equals(parent.key)) { // 올바르지 않은 키
+                    Log.e("ContactService", "신뢰할 수 없는 클라이언트입니다.");
+                    sendCommand("BYE"); // 접속 종료
+                    return FAILED;
+                } else {
+                    sendCommand("HI", guestName);
+                    sendCommand("IM", hostName);
+                    Log.i("ContactService", "'" + guestName + "' 연결됨!");
+                    return SUCCESS;
+                }
             }
-        }
-        if (!this.key.equals(key)) { // 올바르지 않은 키
-            System.out.println("E: 신뢰할 수 없는 클라이언트입니다.");
-            return -1;
+            return PASS;
+
         }
 
-        sendCommand("HI", this.clientName);
-        sendCommand("IM", this.serverName);
-        return 0;
+        /**
+         * 클라이언트의 정보 확인을 시작합니다.
+         *
+         * @return
+         */
+        @Override
+        public int onDisabled(String exec, String content, String raw) {
+            if ("HELLO".equals(exec)) {
+                return SUCCESS;
+            }
+            return PASS;
+        }
+
     }
 
-    /**
-     * 클라이언트로부터 파일을 받습니다.
-     *
-     * @return
-     */
-    int getFile(String filename) {
-        try {
-            int dataSize = 0; // 파일 전송 횟수 (per 1000bytes)
-            String hash = null;
+    class FileInputService extends InputService {
+        final int FAILED_INVAILD_HASH = -2;
 
-            while (true) {
-                String[] cmd = getCommand();
-                String exec = cmd[0];
-                String content = cmd[1];
+        FileOutputStream fout;
 
-                if ("SIZE".equals(exec)) {
-                    dataSize = Integer.parseInt(content);
-                } else if ("HASH".equals(exec)) {
-                    hash = content;
-                } else if ("GO".equals(exec)) {
-                    break;
-                }
-            }
+        String key;
 
-            int pos = filename.lastIndexOf( "\\" );
-            String name = filename.substring(pos + 1);    // 파일 이름 추출
-            pos = filename.lastIndexOf( "/" );
-            name = filename.substring(pos + 1);    // 파일 이름 추출
-            System.out.println("filename:       " + name);
-            File file = new File(name);                     // 파일 생성
-            fout = new FileOutputStream(file);              // 파일 스트림 생성
+        boolean transfer = false;
+        String filename; // 파일 이름
+        int dataSize = 0; // 파일 전송 횟수 (per 1000bytes)
+        String hash = null; // 파일 해시
 
-            int datas = dataSize;
-            System.out.println("dataSize:" + dataSize);
-            byte[] buffer = new byte[1024];
-            int len;
-
-            // download data
-            soc.setSoTimeout(2000);
-            for (; dataSize > 0; dataSize--) {
-                len = din.read(buffer);
-                fout.write(buffer, 0, len);
-            }
-            System.out.println("I: OVER 대기");
-
-            while (true) {
-                String[] cmd = getCommand();
-                String exec = cmd[0];
-                String content = cmd[1];
-
-                if ("OVER".equals(exec)) {
-                    System.out.println("I: 수신 종료");
-                    break;
-                } else if ("ERR".equals(exec)) {
-                    System.out.println(("E: 통신 에러!!! : " + content));
-                    return -1;
-                }
-            }
-
-            System.out.println("I: " + datas + " KB 수신");
-            fout.flush();
-            fout.close();
-            System.out.println("I: 파일 무결성 검사를 시작합니다...");
-
-            try {
-                if (getHashFile(name).equals(hash)) { // 무결성 검증
-                    System.out.println("I: 무결성 검사 성공!");
-                } else {
-                    System.out.println("I: 무결성 검사 실패");
-                    return -2;
-                }
-            } catch (Exception e) {
-                System.out.println("I: 실패");
-                e.printStackTrace();
-                return -2;
-            }
-
-        } catch (IOException e) {
-            e.printStackTrace();
-            return -1;
+        /**
+         * 부모 인스턴스를 전달합니다.
+         *
+         * @param parent
+         */
+        FileInputService(Device parent) {
+            super(parent);
         }
-        return 0;
+
+        /**
+         * 파일을 전송합니다.
+         *
+         * @return
+         */
+        @Override
+        public int onEnabled(String exec, String content, String raw) {
+            try {
+                if (!transfer){
+                    if ("SIZE".equals(exec)) {
+                        dataSize = Integer.parseInt(content);
+                    } else if ("HASH".equals(exec)) {
+                        hash = content;
+                    } else if ("GO".equals(exec)) { // 전송 요청 승인
+                        Log.i("FileInputService", "파일 이름: " + filename);
+                        Log.i("FileInputService", "파일 크기: " + dataSize + "KB");
+                        File file = new File(filename);                     // 파일 생성
+                        fout = new FileOutputStream(file);              // 파일 스트림 생성
+
+                        transfer = true;
+                    }
+                } else { // 데이터 전송
+                    if (dataSize > 0) { // 실제 데이터 전송
+                        Base64.Decoder decoder = Base64.getDecoder();
+                        byte[] data = decoder.decode(content);
+                        fout.write(data, 0, Integer.parseInt(exec));
+                        dataSize--;
+                        if (dataSize == 0) {
+                            Log.i("FileInputService", "OVER 대기");
+
+                            fout.flush();
+                            fout.close();
+                        }
+                    } else {
+                        if ("OVER".equals(exec)) {
+                            Log.i("FileInputService", "수신 완료");
+                            Log.i("FileInputService", "파일 무결성 검사를 시작합니다...");
+                            try {
+                                if (getHashFile(filename).equals(hash)) { // 무결성 검증
+                                    Log.i("FileInputService", "무결성 검사 성공!");
+                                    sendCommand("GOOD");
+                                    return SUCCESS;
+                                } else {
+                                    Log.i("FileInputService", "무결성 검사 실패");
+                                    sendCommand("BAD");
+                                    return FAILED_INVAILD_HASH;
+                                }
+                            } catch (Exception e) {
+                                Log.i("FileInputService", "실패");
+                                e.printStackTrace();
+                                sendCommand("BAD");
+                                return FAILED_INVAILD_HASH;
+                            }
+
+                        } else if ("ERR".equals(exec)) {
+                            Log.e("FileInputService", "통신 에러!!! : " + content);
+                            return FAILED;
+                        }
+                    }
+                }
+
+            } catch (IOException e) {
+                e.printStackTrace();
+                return FAILED;
+            }
+            return PASS;
+
+        }
+
+        /**
+         * 파일 전송 과정을 시작합니다.
+         *
+         * @return
+         */
+        @Override
+        public int onDisabled(String exec, String content, String raw) {
+            if ("SEND".equals(exec)) {
+                filename = content;
+                return SUCCESS;
+            }
+            return PASS;
+        }
+
     }
 
 }

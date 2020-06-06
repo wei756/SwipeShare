@@ -48,12 +48,15 @@ public class SendActivity extends AppCompatActivity {
         filepath = initIntent();
 
         IntentIntegrator intentIntegrator = new IntentIntegrator(this);
-        intentIntegrator.setBeepEnabled(false);//바코드 인식시 소리
+        intentIntegrator.setBeepEnabled(false); // 바코드 인식시 소리
+        intentIntegrator.setOrientationLocked(false); // 화면 방향 제한 해제
+        intentIntegrator.setPrompt("");
         intentIntegrator.initiateScan();
     }
 
     /**
      * QR코드 인식 후
+     *
      * @param requestCode
      * @param resultCode
      * @param data
@@ -63,7 +66,9 @@ public class SendActivity extends AppCompatActivity {
         IntentResult result = IntentIntegrator.parseActivityResult(requestCode, resultCode, data);
         if (result != null) {
             if (result.getContents() == null) {
-                Toast.makeText(this, "Cancelled", Toast.LENGTH_LONG).show();
+                //Toast.makeText(this, "Cancelled", Toast.LENGTH_LONG).show();
+                // 전송 취소
+                finish();
             } else {
                 //Toast.makeText(this, "Scanned: " + result.getContents(), Toast.LENGTH_LONG).show();
                 try {
@@ -72,7 +77,7 @@ public class SendActivity extends AppCompatActivity {
                     etPort.setText(results[1]);
                     etKey.setText(results[2]);
                     connect();
-                } catch(Exception e) {
+                } catch (Exception e) {
                     e.printStackTrace();
                     Toast.makeText(this, "QR 코드가 올바르지 않습니다: " + result.getContents(), Toast.LENGTH_LONG).show();
                 }
@@ -81,6 +86,12 @@ public class SendActivity extends AppCompatActivity {
         } else {
             super.onActivityResult(requestCode, resultCode, data);
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        disconnect();
     }
 
     private String initIntent() {
@@ -122,6 +133,17 @@ public class SendActivity extends AppCompatActivity {
                 btnSendFile.setVisibility(View.VISIBLE);
             });
         }).start();
+
+        new Thread(() -> {
+            while (true) {
+                if (client != null && client.isStandBy()) {
+                    System.out.println("I: 게스트 정보 전송 시작");
+                    client.sendClientInfo();
+                    sendFile();
+                    break;
+                }
+            }
+        }).start();
     }
 
     /**
@@ -129,7 +151,7 @@ public class SendActivity extends AppCompatActivity {
      */
     private void disconnect() {
         new Thread(() -> {
-            try{
+            try {
                 client.bye();
             } catch (NullPointerException e) {
                 e.printStackTrace();
@@ -139,6 +161,7 @@ public class SendActivity extends AppCompatActivity {
                     clConnect.setVisibility(View.VISIBLE);
                     btnDisconnect.setVisibility(View.GONE);
                     btnSendFile.setVisibility(View.GONE);
+                    Toast.makeText(this, "전송 취소", Toast.LENGTH_LONG).show();
                 });
             }
         }).start();
@@ -149,15 +172,22 @@ public class SendActivity extends AppCompatActivity {
      */
     private void sendFile() {
         new Thread(() -> {
-            try{
+            try {
+                client.sendFile(filepath);
+                /*
                 int status = -1;
                 while (status == -1 && filepath != null) {
                     status = client.sendFile(filepath);
                 }
+
+                 */
             } catch (Exception e) {
                 e.printStackTrace();
             } finally {
-                disconnect();
+                runOnUiThread(() ->
+                        Toast.makeText(this, "전송 완료", Toast.LENGTH_LONG).show()
+                );
+                finish();
             }
         }).start();
     }
